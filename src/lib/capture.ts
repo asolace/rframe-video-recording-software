@@ -79,9 +79,10 @@ export async function createCapture(
   const streams = new Set<MediaStream>();
   const videos = new Set<HTMLVideoElement>();
   const audioNodes = new Set<MediaStreamAudioSourceNode>();
-  let width = 1280;
-  let height = 720;
-  let initialDisplaySize: { width: number; height: number } | undefined;
+  // Every recording starts on the same landscape canvas. Source dimensions can
+  // change while sharing, but the canvas and its MediaRecorder track never do.
+  const width = 1280;
+  const height = 720;
   let context: AudioContext | undefined;
   let destination: MediaStreamAudioDestinationNode | undefined;
   let silence: ConstantSourceNode | undefined;
@@ -353,11 +354,6 @@ export async function createCapture(
 
     if (options.mode !== "camera") {
       await startScreenShare();
-      const settings = activeScreen?.stream.getVideoTracks()[0]?.getSettings();
-      initialDisplaySize = {
-        width: activeScreen?.video?.videoWidth || settings?.width || width,
-        height: activeScreen?.video?.videoHeight || settings?.height || height,
-      };
     }
     const needsCamera =
       options.mode === "camera" ||
@@ -403,24 +399,6 @@ export async function createCapture(
         microphoneAnalyser.fftSize = microphoneSamples.length;
         microphoneNode.connect(microphoneAnalyser);
       }
-    }
-    // Retain the source resolution where possible; later source changes never
-    // resize this canvas or replace its recording track.
-    if (options.mode !== "screen-camera") {
-      const cameraSettings = inputs?.getVideoTracks()[0]?.getSettings();
-      const sourceWidth =
-        options.mode === "camera"
-          ? cameraVideo?.videoWidth || cameraSettings?.width || width
-          : initialDisplaySize?.width || width;
-      const sourceHeight =
-        options.mode === "camera"
-          ? cameraVideo?.videoHeight || cameraSettings?.height || height
-          : initialDisplaySize?.height || height;
-      const scale = Math.min(1, 1920 / Math.max(sourceWidth, sourceHeight));
-      width = Math.max(2, Math.round((sourceWidth * scale) / 2) * 2);
-      height = Math.max(2, Math.round((sourceHeight * scale) / 2) * 2);
-      canvas.width = width;
-      canvas.height = height;
     }
     await context.resume();
     check();

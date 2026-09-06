@@ -32,6 +32,7 @@ import {
 } from "../../lib/capture";
 import "./recorder.css";
 import MicrophoneMeter from "./MicrophoneMeter";
+import { TRANSCRIPTION_DOWNLOAD_MB } from "../../lib/transcription";
 
 interface Props {
   initialMode?: RecordingMode;
@@ -505,7 +506,7 @@ export default function Recorder({
             </p>
           </div>
           <span className="rc-quality">
-            <span /> Browser recording
+            <span /> 1280 × 720 · Landscape
           </span>
         </div>
         {!supported && (
@@ -803,8 +804,11 @@ export default function Recorder({
           </section>
           <aside className="rc-settings">
             <div className="rc-settings-heading">
-              <h2>Recording setup</h2>
-              <span>01</span>
+              <div>
+                <h2>Recording setup</h2>
+                <p className="rc-canvas-preset">1280 × 720 landscape canvas · locked after recording</p>
+              </div>
+              <span>16:9</span>
             </div>
             <fieldset className="rc-mode-list" disabled={locked}>
               <legend>
@@ -909,6 +913,11 @@ export default function Recorder({
                 </p>
               </div>
             </div>
+            <p className="rc-transcript-note">
+              A transcript starts automatically on this device after you stop.
+              First use downloads about {TRANSCRIPTION_DOWNLOAD_MB} MB of speech
+              model data plus its runtime.
+            </p>
             {(mode !== "camera" || screenSharing) && (
               <p className="rc-screen-note">
                 To capture system sound, select a browser tab and enable “Share

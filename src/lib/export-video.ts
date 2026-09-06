@@ -1,4 +1,5 @@
-import type { EditState } from "../types";
+import type { CropRect, EditState } from "../types";
+import { cropSourceRect } from "./crop";
 import { timelineDuration } from "./timeline";
 
 export function outputDimensions(
@@ -34,6 +35,7 @@ export function drawVideoFrame(
   canvas: HTMLCanvasElement,
   video: HTMLVideoElement,
   title: string,
+  crop?: CropRect,
 ) {
   const context = canvas.getContext("2d");
   if (!context) return;
@@ -41,13 +43,21 @@ export function drawVideoFrame(
   context.fillStyle = "#08090d";
   context.fillRect(0, 0, width, height);
   if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
-    const scale = Math.min(
-      width / video.videoWidth,
-      height / video.videoHeight,
+    const source = cropSourceRect(crop, video.videoWidth, video.videoHeight);
+    const scale = Math.min(width / source.width, height / source.height);
+    const dw = source.width * scale;
+    const dh = source.height * scale;
+    context.drawImage(
+      video,
+      source.x,
+      source.y,
+      source.width,
+      source.height,
+      (width - dw) / 2,
+      (height - dh) / 2,
+      dw,
+      dh,
     );
-    const dw = video.videoWidth * scale;
-    const dh = video.videoHeight * scale;
-    context.drawImage(video, (width - dw) / 2, (height - dh) / 2, dw, dh);
   }
   if (title.trim()) {
     const fontSize = Math.max(
@@ -245,16 +255,18 @@ export async function exportVideo(options: {
     });
     // Install a rejection handler while the export loop is still running.
     void stopped.catch(() => undefined);
+    let activeCrop = edits.clips[0]?.crop;
     const draw = () => {
-      drawVideoFrame(canvas, video, edits.title);
+      drawVideoFrame(canvas, video, edits.title, activeCrop);
       frame = requestAnimationFrame(draw);
     };
     draw();
     let completed = 0;
     for (const [index, clip] of edits.clips.entries()) {
       if (signal.aborted) throw abortError();
+      activeCrop = clip.crop;
       await seek(video, clip.start, signal);
-      drawVideoFrame(canvas, video, edits.title);
+      drawVideoFrame(canvas, video, edits.title, activeCrop);
       if (index === 0) recorder.start(200);
       else recorder.resume();
       await video.play();

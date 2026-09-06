@@ -560,6 +560,22 @@
   font-weight: 550;
   margin: 0;
 }
+.rc-canvas-preset {
+  margin: 8px 0 0;
+  font-size: 9px;
+  line-height: 1.6;
+  color: #a1a7ba;
+  max-width: 205px;
+}
+.rc-transcript-note {
+  grid-column: 1 / -1;
+  margin: 17px 0 0;
+  border-top: 1px solid #2c2e37;
+  padding-top: 14px;
+  font-size: 10px;
+  line-height: 1.75;
+  color: #a2abc2;
+}
 .rc-settings-heading > span {
   font:
     10px ui-monospace,

@@ -32,6 +32,15 @@ describe("non-destructive timeline", () => {
     expect(timelineToSource(reordered, 4)).toEqual({ index: 1, time: 2 });
     expect(timelineToSource(reordered, 100)).toEqual({ index: 1, time: 8 });
   });
+  it("keeps crop on both split fragments and supports short speech fragments", () => {
+    const crop = { x: 0.1, y: 0.2, width: 0.5, height: 0.5 };
+    expect(
+      splitClip([{ ...clips[0], crop }], "a", 5, "c").map((clip) => clip.crop),
+    ).toEqual([crop, crop]);
+    const short = [{ id: "word-tail", start: 0, end: 0.04 }];
+    expect(trimClip(short, "word-tail", "start", 0, 20)).toEqual(short);
+    expect(trimClip(short, "word-tail", "end", 0.02, 20)).toEqual(short);
+  });
   it("keeps trims within source bounds and prevents empty clips", () => {
     expect(trimClip(clips, "a", "start", -12, 20)[0].start).toBe(0);
     expect(trimClip(clips, "a", "start", 12, 20)[0].start).toBe(7.9);

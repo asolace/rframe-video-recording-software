@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowDownToLine,
@@ -22,7 +22,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import type { EditState, Project } from "../../types";
+import type { EditState, Project, TimeRange } from "../../types";
 import {
   drawVideoFrame,
   exportVideo,
@@ -38,11 +38,15 @@ import {
   timelineToSource,
   trimClip,
 } from "../../lib/timeline";
+import { cutTranscriptRanges } from "../../lib/transcript-edit";
+import ClipSectionSelector from "./ClipSectionSelector";
+import TranscriptPanel from "./TranscriptPanel";
 import "./editor.css";
 
 interface Props {
   project: Project;
   blob: Blob;
+  autoTranscribe?: boolean;
   onSave: (edits: EditState, name: string) => Promise<void>;
   onBack: () => void;
 }
@@ -66,7 +70,13 @@ const fileName = (name: string) =>
   name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() ||
   "Untitled recording";
 
-export default function Editor({ project, blob, onSave, onBack }: Props) {
+export default function Editor({
+  project,
+  blob,
+  autoTranscribe = false,
+  onSave,
+  onBack,
+}: Props) {
   const initial = {
     ...project.edits,
     clips: project.edits.clips.length
@@ -93,10 +103,18 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [processingTranscript, setProcessingTranscript] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<"video" | "transcript">(
+    autoTranscribe ? "transcript" : "video",
+  );
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [url, setUrl] = useState("");
+  const [selectingSection, setSelectingSection] = useState(false);
+  const [sectionSelection, setSectionSelection] = useState<
+    (TimeRange & { clipId: string }) | null
+  >(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const editsRef = useRef(edits);
@@ -112,6 +130,16 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
     edits.clips.findIndex((clip) => clip.id === selectedId),
   );
   const selectedClip = edits.clips[selectedIndex];
+  const sectionRange =
+    sectionSelection?.clipId === selectedClip.id &&
+    sectionSelection.start >= selectedClip.start &&
+    sectionSelection.end <= selectedClip.end
+      ? sectionSelection
+      : {
+          start:
+            selectedClip.start + (selectedClip.end - selectedClip.start) / 4,
+          end: selectedClip.end - (selectedClip.end - selectedClip.start) / 4,
+        };
   const total = timelineDuration(edits.clips);
   const editedTime = sourceToTimeline(edits.clips, selectedIndex, sourceTime);
   const dimensions = outputDimensions(
@@ -119,18 +147,22 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
     project.height,
     edits.aspectRatio,
   );
-  const dirty = saved !== JSON.stringify({ edits, name });
-  const busy = saving || exporting;
+  const editSnapshot = useMemo(
+    () => JSON.stringify({ edits, name }),
+    [edits, name],
+  );
+  const dirty = saved !== editSnapshot;
+  const busy = saving || exporting || processingTranscript;
 
   useEffect(() => {
-    if (!dirty && !exporting) return;
+    if (!dirty && !exporting && !processingTranscript) return;
     const protectChanges = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", protectChanges);
     return () => window.removeEventListener("beforeunload", protectChanges);
-  }, [dirty, exporting]);
+  }, [dirty, exporting, processingTranscript]);
   useEffect(() => {
     if (!exporting) return;
     cancelExportRef.current?.focus();
@@ -176,7 +208,13 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
     let lastUpdate = 0;
     const render = (now: number) => {
       const canvas = canvasRef.current;
-      if (canvas) drawVideoFrame(canvas, video, editsRef.current.title);
+      if (canvas)
+        drawVideoFrame(
+          canvas,
+          video,
+          editsRef.current.title,
+          editsRef.current.clips[activeRef.current]?.crop,
+        );
       if (now - lastUpdate > 70) {
         setSourceTime(video.currentTime);
         lastUpdate = now;
@@ -187,7 +225,7 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
         !video.paused &&
         clip &&
         !transitioningRef.current &&
-        video.currentTime >= clip.end - 0.025
+        video.currentTime >= clip.end
       ) {
         if (activeRef.current < clips.length - 1) {
           transitioningRef.current = true;
@@ -239,6 +277,13 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
     if (videoRef.current) videoRef.current.currentTime = time;
   }, []);
   function change(next: EditState) {
+    if (
+      !next.clips.length ||
+      timelineDuration(next.clips) < MIN_CLIP - 0.000001
+    ) {
+      setError("Keep at least 0.1 seconds of video in the timeline.");
+      return;
+    }
     if (JSON.stringify(next) === JSON.stringify(edits)) return;
     pause();
     setPast((previous) => [...previous.slice(-79), edits]);
@@ -255,7 +300,11 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
       clip.start,
       Math.min(videoRef.current?.currentTime ?? clip.start, clip.end),
     );
-    if (videoRef.current) videoRef.current.currentTime = nextTime;
+    if (
+      videoRef.current &&
+      Math.abs(videoRef.current.currentTime - nextTime) > 0.00001
+    )
+      videoRef.current.currentTime = nextTime;
     setSourceTime(nextTime);
     setNotice("");
   }
@@ -286,7 +335,7 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
       pause();
       return;
     }
-    if (video.currentTime >= edits.clips[activeRef.current].end - 0.03)
+    if (video.currentTime >= edits.clips[activeRef.current].end)
       seekTo(0, edits.clips[0].start);
     try {
       await video.play();
@@ -380,6 +429,47 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
   const canSplit =
     sourceTime - selectedClip.start >= MIN_CLIP &&
     selectedClip.end - sourceTime >= MIN_CLIP;
+  const clipMinLength = Math.min(
+    MIN_CLIP,
+    selectedClip.end - selectedClip.start,
+  );
+  const transcriptBusyChanged = useCallback(
+    (value: boolean) => {
+      if (value) pause();
+      setProcessingTranscript(value);
+    },
+    [pause],
+  );
+  async function saveAutomaticTranscript(next: EditState) {
+    const cleanName = name.trim() || "Untitled recording";
+    await onSave(next, cleanName);
+    if (!mountedRef.current) return;
+    setName(cleanName);
+    setSaved(JSON.stringify({ edits: next, name: cleanName }));
+    setNotice("Transcript generated and saved");
+  }
+  function deleteSection() {
+    try {
+      const clips = cutTranscriptRanges(edits.clips, [
+        { ...sectionRange, clipId: selectedClip.id },
+      ]);
+      const removed = total - timelineDuration(clips);
+      if (removed <= 0.000001) return;
+      change({ ...edits, clips });
+      setSelectingSection(false);
+      setSectionSelection(null);
+      setError("");
+      setNotice(
+        `${removed.toFixed(2)} seconds deleted. Use Undo to restore the section.`,
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not delete the selected section.",
+      );
+    }
+  }
 
   return (
     <>
@@ -570,130 +660,186 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
           </section>
 
           <aside className="ed-inspector">
-            <div className="ed-inspector-heading">
-              <h2>Video settings</h2>
-              <span>Make it yours</span>
+            <div
+              className="ed-inspector-tabs"
+              role="tablist"
+              aria-label="Editor tools"
+            >
+              <button
+                id="ed-video-tab"
+                role="tab"
+                aria-selected={inspectorTab === "video"}
+                aria-controls="ed-video-settings"
+                tabIndex={inspectorTab === "video" ? 0 : -1}
+                onClick={() => setInspectorTab("video")}
+                onKeyDown={(event) => {
+                  if (["ArrowRight", "ArrowLeft", "End"].includes(event.key)) {
+                    event.preventDefault();
+                    setInspectorTab("transcript");
+                    document.getElementById("ed-transcript-tab")?.focus();
+                  }
+                }}
+              >
+                Video settings
+              </button>
+              <button
+                id="ed-transcript-tab"
+                role="tab"
+                aria-selected={inspectorTab === "transcript"}
+                aria-controls="ed-transcript-panel"
+                tabIndex={inspectorTab === "transcript" ? 0 : -1}
+                onClick={() => setInspectorTab("transcript")}
+                onKeyDown={(event) => {
+                  if (["ArrowRight", "ArrowLeft", "Home"].includes(event.key)) {
+                    event.preventDefault();
+                    setInspectorTab("video");
+                    document.getElementById("ed-video-tab")?.focus();
+                  }
+                }}
+              >
+                Transcript
+                {processingTranscript && (
+                  <LoaderCircle size={13} className="ed-spin" />
+                )}
+              </button>
             </div>
-            <fieldset disabled={busy}>
-              <section className="ed-setting">
-                <h3>
-                  <Film size={16} /> Canvas
-                </h3>
-                <span className="ed-label" id="ed-aspect-label">
-                  Aspect ratio
-                </span>
-                <div
-                  className="ed-aspect-options"
-                  role="group"
-                  aria-labelledby="ed-aspect-label"
-                >
-                  {(["original", "16:9", "9:16", "1:1"] as const).map(
-                    (ratio) => (
-                      <button
-                        key={ratio}
-                        className={
-                          edits.aspectRatio === ratio ? "is-active" : ""
-                        }
-                        aria-pressed={edits.aspectRatio === ratio}
-                        onClick={() => change({ ...edits, aspectRatio: ratio })}
-                      >
-                        <span
-                          className={`ed-ratio-shape ed-ratio-${ratio.replace(":", "-")}`}
-                        />
-                        <span>{ratio === "original" ? "Original" : ratio}</span>
-                      </button>
-                    ),
-                  )}
-                </div>
-                <p className="ed-hint">
-                  Your full video stays in frame. Extra space is filled with
-                  black.
-                </p>
-              </section>
-              <section className="ed-setting">
-                <h3>
-                  <Volume2 size={16} /> Audio
-                </h3>
-                <div className="ed-setting-row">
-                  <label htmlFor="ed-mute">Mute video</label>
-                  <button
-                    id="ed-mute"
-                    role="switch"
-                    aria-checked={edits.muted}
-                    className={`ed-switch ${edits.muted ? "is-on" : ""}`}
-                    onClick={() => change({ ...edits, muted: !edits.muted })}
+            <div
+              id="ed-video-settings"
+              role="tabpanel"
+              aria-labelledby="ed-video-tab"
+              hidden={inspectorTab !== "video"}
+            >
+              <fieldset disabled={busy} className="ed-video-settings">
+                <section className="ed-setting">
+                  <h3>
+                    <Film size={16} /> Canvas
+                  </h3>
+                  <div className="ed-fixed-canvas">
+                    <span>
+                      {dimensions.width} × {dimensions.height}
+                    </span>
+                    <span>Locked</span>
+                  </div>
+                  <p className="ed-hint">
+                    Canvas size is fixed when the video is recorded or imported.
+                    Select a section in the timeline to remove footage.
+                  </p>
+                </section>
+                <section className="ed-setting">
+                  <h3>
+                    <Volume2 size={16} /> Audio
+                  </h3>
+                  <div className="ed-setting-row">
+                    <label htmlFor="ed-mute">Mute video</label>
+                    <button
+                      id="ed-mute"
+                      role="switch"
+                      aria-checked={edits.muted}
+                      className={`ed-switch ${edits.muted ? "is-on" : ""}`}
+                      onClick={() => change({ ...edits, muted: !edits.muted })}
+                    >
+                      <span />
+                    </button>
+                  </div>
+                  <label
+                    className="ed-setting-row ed-volume-label"
+                    htmlFor="ed-volume"
                   >
-                    <span />
-                  </button>
-                </div>
-                <label
-                  className="ed-setting-row ed-volume-label"
-                  htmlFor="ed-volume"
-                >
-                  <span>Volume</span>
-                  <b>
-                    {edits.muted
-                      ? "Muted"
-                      : `${Math.round(edits.volume * 100)}%`}
-                  </b>
-                </label>
-                <div className="ed-volume">
-                  {edits.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                  <input
-                    id="ed-volume"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={edits.volume}
-                    disabled={edits.muted}
+                    <span>Volume</span>
+                    <b>
+                      {edits.muted
+                        ? "Muted"
+                        : `${Math.round(edits.volume * 100)}%`}
+                    </b>
+                  </label>
+                  <div className="ed-volume">
+                    {edits.muted ? (
+                      <VolumeX size={16} />
+                    ) : (
+                      <Volume2 size={16} />
+                    )}
+                    <input
+                      id="ed-volume"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={edits.volume}
+                      disabled={edits.muted}
+                      onChange={(event) =>
+                        change({ ...edits, volume: Number(event.target.value) })
+                      }
+                    />
+                  </div>
+                </section>
+                <section className="ed-setting">
+                  <h3>
+                    <Type size={16} /> Title overlay
+                  </h3>
+                  <label className="ed-label" htmlFor="ed-title">
+                    A little context for your video
+                  </label>
+                  <textarea
+                    id="ed-title"
+                    value={edits.title}
+                    maxLength={100}
+                    rows={3}
+                    placeholder="Add a title…"
                     onChange={(event) =>
-                      change({ ...edits, volume: Number(event.target.value) })
+                      change({ ...edits, title: event.target.value })
                     }
                   />
-                </div>
-              </section>
-              <section className="ed-setting">
-                <h3>
-                  <Type size={16} /> Title overlay
-                </h3>
-                <label className="ed-label" htmlFor="ed-title">
-                  A little context for your video
-                </label>
-                <textarea
-                  id="ed-title"
-                  value={edits.title}
-                  maxLength={100}
-                  rows={3}
-                  placeholder="Add a title…"
-                  onChange={(event) =>
-                    change({ ...edits, title: event.target.value })
-                  }
-                />
-                <div className="ed-hint ed-title-hint">
-                  <span>Appears throughout the video</span>
-                  <span>{edits.title.length}/100</span>
-                </div>
-              </section>
-              <section className="ed-setting ed-original">
-                <span>Original recording</span>
-                <p>
-                  {project.width || "—"} × {project.height || "—"} ·{" "}
-                  {(blob.size / 1024 / 1024).toFixed(1)} MB
-                </p>
-                <button
-                  className="ed-text-button"
-                  onClick={() =>
-                    download(
-                      blob,
-                      `${fileName(name)}-original.${blob.type.includes("mp4") ? "mp4" : blob.type.includes("quicktime") ? "mov" : "webm"}`,
-                    )
-                  }
-                >
-                  <Download size={14} /> Download original
-                </button>
-              </section>
-            </fieldset>
+                  <div className="ed-hint ed-title-hint">
+                    <span>Appears throughout the video</span>
+                    <span>{edits.title.length}/100</span>
+                  </div>
+                </section>
+                <section className="ed-setting ed-original">
+                  <span>Original recording</span>
+                  <p>
+                    {project.width || "—"} × {project.height || "—"} ·{" "}
+                    {(blob.size / 1024 / 1024).toFixed(1)} MB
+                  </p>
+                  <button
+                    className="ed-text-button"
+                    onClick={() =>
+                      download(
+                        blob,
+                        `${fileName(name)}-original.${blob.type.includes("mp4") ? "mp4" : blob.type.includes("quicktime") ? "mov" : "webm"}`,
+                      )
+                    }
+                  >
+                    <Download size={14} /> Download original
+                  </button>
+                </section>
+              </fieldset>
+            </div>
+            <div
+              id="ed-transcript-panel"
+              role="tabpanel"
+              aria-labelledby="ed-transcript-tab"
+              hidden={inspectorTab !== "transcript"}
+            >
+              <TranscriptPanel
+                blob={blob}
+                edits={edits}
+                duration={duration}
+                disabled={saving || exporting}
+                sourceTime={sourceTime}
+                activeClipId={selectedClip.id}
+                onChange={change}
+                onSeek={(clipId, time) => {
+                  pause();
+                  seekTo(
+                    edits.clips.findIndex((clip) => clip.id === clipId),
+                    time,
+                  );
+                }}
+                onBusyChange={transcriptBusyChanged}
+                autoGenerate={autoTranscribe && ready}
+                onAutoGenerated={saveAutomaticTranscript}
+              />
+            </div>
           </aside>
         </main>
 
@@ -726,6 +872,17 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
                 <Redo2 size={17} />
               </button>
               <span className="ed-tool-divider" />
+              <button
+                className="ed-button ed-split ed-section-toggle"
+                aria-pressed={selectingSection}
+                disabled={busy}
+                onClick={() => {
+                  pause();
+                  setSelectingSection((value) => !value);
+                }}
+              >
+                <Scissors size={15} /> Select section
+              </button>
               <button
                 className="ed-button ed-split"
                 onClick={split}
@@ -780,6 +937,16 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
                   aria-pressed={selectedId === clip.id}
                   disabled={busy}
                 >
+                  {selectingSection && selectedId === clip.id && (
+                    <span
+                      className="ed-clip-cut-overlay"
+                      aria-hidden="true"
+                      style={{
+                        left: `${(100 * (sectionRange.start - clip.start)) / (clip.end - clip.start)}%`,
+                        width: `${(100 * (sectionRange.end - sectionRange.start)) / (clip.end - clip.start)}%`,
+                      }}
+                    />
+                  )}
                   <span className="ed-clip-name">Clip {index + 1}</span>
                   <span className="ed-clip-length">
                     {timecode(clip.end - clip.start)}
@@ -808,90 +975,114 @@ export default function Editor({ project, blob, onSave, onBack }: Props) {
               }}
             />
           </div>
-          <fieldset className="ed-trim-controls" disabled={busy}>
-            <div className="ed-selected-label">
-              <span className="ed-selected-dot" />
-              <b>Clip {selectedIndex + 1}</b>
-              <span>{timecode(selectedClip.end - selectedClip.start)}</span>
-            </div>
-            <div className="ed-trim-field">
-              <label htmlFor="ed-trim-start">Start</label>
-              <input
-                id="ed-trim-start"
-                aria-label="Clip start in seconds"
-                type="number"
-                min="0"
-                max={Math.max(0, selectedClip.end - MIN_CLIP)}
-                step="0.1"
-                value={Number(selectedClip.start.toFixed(2))}
-                onChange={(event) => trim("start", Number(event.target.value))}
-              />
-              <span>s</span>
-              <input
-                type="range"
-                aria-label="Trim clip start"
-                min="0"
-                max={Math.max(0, selectedClip.end - MIN_CLIP)}
-                step="0.01"
-                value={selectedClip.start}
-                onChange={(event) => trim("start", Number(event.target.value))}
-              />
-            </div>
-            <div className="ed-trim-field">
-              <label htmlFor="ed-trim-end">End</label>
-              <input
-                id="ed-trim-end"
-                aria-label="Clip end in seconds"
-                type="number"
-                min={selectedClip.start + MIN_CLIP}
-                max={duration}
-                step="0.1"
-                value={Number(selectedClip.end.toFixed(2))}
-                onChange={(event) => trim("end", Number(event.target.value))}
-              />
-              <span>s</span>
-              <input
-                type="range"
-                aria-label="Trim clip end"
-                min={selectedClip.start + MIN_CLIP}
-                max={Math.max(duration, selectedClip.start + MIN_CLIP)}
-                step="0.01"
-                value={selectedClip.end}
-                onChange={(event) => trim("end", Number(event.target.value))}
-              />
-            </div>
-            <div className="ed-reorder">
-              <button
-                className="ed-icon"
-                aria-label="Move selected clip earlier"
-                onClick={() =>
-                  change({
-                    ...edits,
-                    clips: moveClip(edits.clips, selectedClip.id, -1),
-                  })
-                }
-                disabled={selectedIndex === 0}
-              >
-                <ChevronLeft size={17} />
-              </button>
-              <button
-                className="ed-icon"
-                aria-label="Move selected clip later"
-                onClick={() =>
-                  change({
-                    ...edits,
-                    clips: moveClip(edits.clips, selectedClip.id, 1),
-                  })
-                }
-                disabled={selectedIndex === edits.clips.length - 1}
-              >
-                <ChevronRight size={17} />
-              </button>
-            </div>
-          </fieldset>
+          {selectingSection ? (
+            <ClipSectionSelector
+              clip={selectedClip}
+              clipNumber={selectedIndex + 1}
+              range={sectionRange}
+              sourceTime={sourceTime}
+              thumbnail={project.thumbnail}
+              disabled={busy}
+              onChange={(range) =>
+                setSectionSelection({ ...range, clipId: selectedClip.id })
+              }
+              onSeek={(time) => {
+                pause();
+                seekTo(selectedIndex, time);
+              }}
+              onDelete={deleteSection}
+              onClose={() => setSelectingSection(false)}
+            />
+          ) : (
+            <fieldset className="ed-trim-controls" disabled={busy}>
+              <div className="ed-selected-label">
+                <span className="ed-selected-dot" />
+                <b>Clip {selectedIndex + 1}</b>
+                <span>{timecode(selectedClip.end - selectedClip.start)}</span>
+              </div>
+              <div className="ed-trim-field">
+                <label htmlFor="ed-trim-start">Start</label>
+                <input
+                  id="ed-trim-start"
+                  aria-label="Clip start in seconds"
+                  type="number"
+                  min="0"
+                  max={Math.max(0, selectedClip.end - clipMinLength)}
+                  step="0.1"
+                  value={Number(selectedClip.start.toFixed(2))}
+                  onChange={(event) =>
+                    trim("start", Number(event.target.value))
+                  }
+                />
+                <span>s</span>
+                <input
+                  type="range"
+                  aria-label="Trim clip start"
+                  min="0"
+                  max={Math.max(0, selectedClip.end - clipMinLength)}
+                  step="0.01"
+                  value={selectedClip.start}
+                  onChange={(event) =>
+                    trim("start", Number(event.target.value))
+                  }
+                />
+              </div>
+              <div className="ed-trim-field">
+                <label htmlFor="ed-trim-end">End</label>
+                <input
+                  id="ed-trim-end"
+                  aria-label="Clip end in seconds"
+                  type="number"
+                  min={selectedClip.start + clipMinLength}
+                  max={duration}
+                  step="0.1"
+                  value={Number(selectedClip.end.toFixed(2))}
+                  onChange={(event) => trim("end", Number(event.target.value))}
+                />
+                <span>s</span>
+                <input
+                  type="range"
+                  aria-label="Trim clip end"
+                  min={selectedClip.start + clipMinLength}
+                  max={Math.max(duration, selectedClip.start + clipMinLength)}
+                  step="0.01"
+                  value={selectedClip.end}
+                  onChange={(event) => trim("end", Number(event.target.value))}
+                />
+              </div>
+              <div className="ed-reorder">
+                <button
+                  className="ed-icon"
+                  aria-label="Move selected clip earlier"
+                  onClick={() =>
+                    change({
+                      ...edits,
+                      clips: moveClip(edits.clips, selectedClip.id, -1),
+                    })
+                  }
+                  disabled={selectedIndex === 0}
+                >
+                  <ChevronLeft size={17} />
+                </button>
+                <button
+                  className="ed-icon"
+                  aria-label="Move selected clip later"
+                  onClick={() =>
+                    change({
+                      ...edits,
+                      clips: moveClip(edits.clips, selectedClip.id, 1),
+                    })
+                  }
+                  disabled={selectedIndex === edits.clips.length - 1}
+                >
+                  <ChevronRight size={17} />
+                </button>
+              </div>
+            </fieldset>
+          )}
           <div className="ed-timeline-note">
-            Trim times refer to the original recording. Your source video is
-            always preserved.
+            Times refer to the original recording. Your source video is always
+            preserved.
           </div>
         </section>
       </div>

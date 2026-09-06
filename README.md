@@ -16,8 +16,12 @@ Open the localhost URL printed by Vite. Use **desktop Chrome or Edge** for the f
 - **Record:** camera only, screen only, or screen with a camera overlay. Choose input devices, mute your microphone or camera, pause and resume, and stop to save directly into the editor. Use **Share screen** and **Stop sharing** during a recording to switch between your screen and camera without ending your take. Screen audio is included when the browser provides it.
 - **Import:** choose or drop video files to create projects from existing footage.
 - **Check your microphone:** after setting up preview, the live **Mic level** bar responds as you speak, including while recording or paused. It shows when your mic is muted and warns when the input is too loud. It measures the microphone independently of shared-screen audio.
-- **Edit:** trim clip boundaries, split at the playhead, delete or reorder clips, undo and redo, set volume or mute, add a title, and choose original, landscape, portrait, or square framing.
-- **Export:** download an edited video with your clip order, trims, framing, title, and audio applied. The browser selects a supported recording format, usually WebM. You can also download the untouched original.
+- **Canvas:** new recordings use a fixed **1280 × 720, 16:9** canvas. Cameras and shared screens fit inside it. Canvas size cannot be adjusted in the editor; imported videos keep their original dimensions.
+- **Edit:** trim clip boundaries, split at the playhead, delete or reorder clips, undo and redo, set volume or mute, and add a title.
+- **Delete a section:** select a clip, click **Select section**, then drag the two handles or enter **From/To** times. Click **Delete selected section** to remove that interval and join the remaining footage. Undo restores it. Times refer to the original recording.
+- **Edit by transcript:** after a recording ends, Frame saves the video, opens **Transcript**, generates an English transcript on your device, and saves it automatically. For imported videos, click **Generate transcript**. Select words (Shift-click for a range), then press Delete/Backspace or the delete button to cut their video and audio from the timeline. The displayed transcript follows clip order and highlights the current word during playback.
+- **Clean up speech:** remove recognized filler words such as “um” and “uh” in one action. Analyze silences with adjustable quietness and minimum duration, review the detected gaps, then apply the cuts. Undo restores these edits.
+- **Export:** download an edited video with your clip order, deleted sections, transcript cuts, title, and audio applied. The browser selects a supported recording format, usually WebM. You can also download the untouched original.
 - **Organize:** create, rename, and color folders; move and rename projects; favorite videos; search and sort; switch between grid and list views. Removing a folder keeps its projects.
 - **Keep working:** projects, edits, and source videos persist in IndexedDB across reloads. Returning from the editor saves pending edits first.
 
@@ -33,7 +37,17 @@ The screen-sharing feature captures your selected screen into a recording. This 
 
 Screen sharing can be started and stopped during preview, recording, or a pause. Stopping sharing in Frame or in the browser returns to your camera; if no camera is active, the canvas is blank. The microphone and recording continue in their current states. Share again to select another tab, window, or screen. Cancelling the screen picker leaves the current recording intact. Only **Stop recording** finishes and saves the take.
 
-Edited exports render in **real time**. Keep the tab visible until completion. The editor keeps the entire source frame and adds dark space for a different aspect ratio. Titles appear throughout the video. Exports are limited to a 1920px longest edge. Long recordings consume memory while recording/exporting; this version does not perform background encoding, automatic transcription, multitrack editing, or crash recovery during an active recording.
+Edited exports render in **real time**. Keep the tab visible until completion. Canvas framing is locked; previously saved framing remains supported for older projects. Titles appear throughout the video. Exports are limited to a 1920px longest edge. Long recordings consume memory while recording/exporting; this version does not perform background encoding, multitrack editing, or crash recovery during an active recording.
+
+## Transcript and silence editing
+
+Transcription starts automatically after a new recording is saved. Imported videos and reopened projects use the manual Generate button. The first run downloads an English Whisper model (about 45 MB) from Hugging Face, plus the speech runtime served with the app. The model is cached by the browser when storage is available. Audio and video stay on your device; transcription runs locally in a cancellable background worker. A saved transcript reopens without running the model again. Cancelling or a transcription failure keeps the saved recording safe and offers a manual retry.
+
+Local transcript and silence analysis currently support source recordings up to **20 minutes and 512 MB**. For longer recordings, export a shorter section and import that file for analysis.
+
+Automatic text and word timing can be imperfect. The model sometimes omits filler words, so automatic filler cleanup can only remove the ones present in the transcript. Review cuts in the preview and use Undo if needed. Silence detection measures audio energy rather than recognizing speech: adjust the threshold for quiet voices, and expect background sound or music to affect the results. Analysis uses the original audio regardless of the editor's playback volume or mute setting.
+
+Transcript words use timestamps in seconds in the original source. Timed JSON import/export supports corrections without uploading the recording. Transcript deletion cuts only the selected occurrence when a source interval appears in more than one clip. The original recording is preserved through cuts, saves, and exports.
 
 ## Verify
 
@@ -49,7 +63,15 @@ npm run build
 npm run test:browser
 ```
 
-The library test covers import, persistence, folder/project management, search, favorites, and responsive layouts. Recorder tests use Chrome's synthetic camera input; simulated display inputs exercise composition without opening a physical screen picker. The export test generates and decodes real video to check edits, audio, and cancellation. Screenshots and fixture outputs are written to `test-results/`, which is ignored by Git. Real hardware selection and the native screen picker should also be checked manually in your browser.
+The library test covers import, persistence, folder/project management, search, favorites, and responsive layouts. Recorder tests use Chrome's synthetic camera input; simulated display inputs exercise composition without opening a physical screen picker. Export and section tests generate and decode real video to check edits, locked framing, audio, and cancellation. Transcript editor tests use timed text fixtures and real audio to check word deletion, filler cleanup, silence cuts, undo, export, persistence, and automatic transcription lifecycle. Screenshots and fixture outputs are written to `test-results/`, which is ignored by Git. Real hardware selection and the native screen picker should also be checked manually in your browser.
+
+To additionally run the local speech model on real audio, with network access for the model and sample download:
+
+```powershell
+npm run test:transcription
+```
+
+The runtime regression checks both the local Vite path and production assets using real transcription. With your development server already running, run `npm run test:transcription:runtime`. It defaults to `http://localhost:5173`; set `FRAME_DEV_URL` for a different local origin. The test never starts a server.
 
 ## Code map
 
@@ -59,6 +81,11 @@ The library test covers import, persistence, folder/project management, search, 
 - `src/features/editor/`: video preview, timeline, settings, and export UI.
 - `src/lib/export-video.ts`: shared preview rendering and actual edited video encoding.
 - `src/lib/timeline.ts`: pure clip and timeline operations.
+- `src/features/editor/ClipSectionSelector.tsx`: selection handles and time boundaries for deleting footage.
+- `src/lib/crop.ts`: compatibility rendering for spatial crops saved by earlier versions.
+- `src/lib/transcript-edit.ts`: timestamp validation and word-linked timeline cuts.
+- `src/lib/transcription.ts` and `transcription.worker.ts`: local Whisper model lifecycle and word alignment.
+- `src/lib/audio-analysis.ts`: local audio decoding and configurable silence detection.
 - `src/lib/storage.ts`: transactional IndexedDB storage with separate metadata and video stores.
 - `src/lib/media.ts`: video metadata, thumbnails, downloads, and formatting.
 

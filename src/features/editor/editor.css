@@ -138,7 +138,7 @@
 }
 .ed-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 286px;
+  grid-template-columns: minmax(0, 1fr) 350px;
   min-height: 510px;
   flex: 1;
 }
@@ -290,6 +290,37 @@
   border-left: 1px solid var(--ed-border);
   background: #17181e;
 }
+.ed-inspector-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 7px 12px 0;
+  background: #17181e;
+  border-bottom: 1px solid #30323c;
+}
+.ed-inspector-tabs button {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: center;
+  min-height: 45px;
+  padding: 9px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9b9fb1;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+}
+.ed-inspector-tabs button[aria-selected="true"] {
+  color: #c0c5ff;
+  border-bottom-color: #929aff;
+}
+.ed-inspector [role="tabpanel"][hidden] {
+  display: none;
+}
 .ed-inspector-heading {
   padding: 24px 23px 22px;
   border-bottom: 1px solid #292b35;
@@ -317,6 +348,38 @@
 }
 .ed-setting h3 svg {
   color: #9296aa;
+}
+.ed-fixed-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: #20222b;
+  border: 1px solid #353744;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.ed-fixed-canvas > span:last-child {
+  color: #a6abc0;
+  font-size: 10px;
+}
+.ed-section-toggle[aria-pressed="true"] {
+  background: #43303f;
+  border-color: #b67c97;
+  color: #ffd2e2;
+}
+.ed-clip-cut-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: #e7809755;
+  border-inline: 2px solid #f4b2c4;
+}
+.ed-clip-name,
+.ed-clip-length {
+  position: relative;
 }
 .ed-label {
   display: block;
@@ -781,7 +844,7 @@
 }
 @media (min-width: 1600px) {
   .ed-main {
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) 380px;
   }
   .ed-preview-space {
     height: 54vh;
@@ -789,7 +852,7 @@
 }
 @media (max-width: 1000px) {
   .ed-main {
-    grid-template-columns: minmax(0, 1fr) 250px;
+    grid-template-columns: minmax(0, 1fr) 320px;
   }
   .ed-setting {
     padding: 19px;
@@ -868,7 +931,7 @@
   .ed-inspector-heading h2 {
     margin: 0;
   }
-  .ed-inspector fieldset {
+  .ed-inspector .ed-video-settings {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
@@ -962,7 +1025,7 @@
   }
 }
 @media (max-width: 420px) {
-  .ed-inspector fieldset {
+  .ed-inspector .ed-video-settings {
     grid-template-columns: 1fr;
   }
   .ed-setting:nth-child(odd) {

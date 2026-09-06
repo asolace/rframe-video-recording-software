@@ -192,6 +192,7 @@ export default function App() {
   const [editing, setEditing] = useState<{
     project: Project;
     blob: Blob;
+    autoTranscribe?: boolean;
   } | null>(null);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("updated");
@@ -334,10 +335,10 @@ export default function App() {
     const name = `Recording ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })} at ${new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
     const project = createProject(result, name, activeFolderId);
     await saveProject(project, result.blob);
-    setEditing({ project, blob: result.blob });
+    setEditing({ project, blob: result.blob, autoTranscribe: true });
     setScreen("editor");
     await refresh();
-    notify("Recording saved. Make it your own.");
+    notify("Recording saved. Generating your transcript.");
   }
 
   const saveEdits = useCallback(
@@ -579,8 +580,10 @@ export default function App() {
         />
       ) : screen === "editor" && editing ? (
         <Editor
+          key={editing.project.id}
           project={editing.project}
           blob={editing.blob}
+          autoTranscribe={editing.autoTranscribe}
           onSave={saveEdits}
           onBack={() => {
             setScreen("library");
@@ -1395,9 +1398,10 @@ export default function App() {
               <div>
                 <h3>Make the cut</h3>
                 <p>
-                  Trim the ends, split and rearrange clips, adjust sound, add a
-                  title, and choose your video’s aspect ratio. Save your edits
-                  to pick up later.
+                  Select and delete sections in the timeline, or trim, split,
+                  and rearrange clips. A transcript is generated after
+                  recording; delete words to cut their footage, or remove filler
+                  words and quiet pauses. Save your edits to pick up later.
                 </p>
               </div>
             </div>

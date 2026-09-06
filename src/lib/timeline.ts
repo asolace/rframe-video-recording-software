@@ -20,7 +20,7 @@ export function splitClip(
   return [
     ...clips.slice(0, index),
     { ...clip, end: at },
-    { id: newId, start: at, end: clip.end },
+    { ...clip, id: newId, start: at },
     ...clips.slice(index + 1),
   ];
 }
@@ -45,11 +45,12 @@ export function trimClip(
   if (!Number.isFinite(value)) return clips;
   return clips.map((clip) => {
     if (clip.id !== id) return clip;
+    const minimum = Math.min(MIN_CLIP, clip.end - clip.start);
     return edge === "start"
-      ? { ...clip, start: Math.max(0, Math.min(value, clip.end - MIN_CLIP)) }
+      ? { ...clip, start: Math.max(0, Math.min(value, clip.end - minimum)) }
       : {
           ...clip,
-          end: Math.min(duration, Math.max(value, clip.start + MIN_CLIP)),
+          end: Math.min(duration, Math.max(value, clip.start + minimum)),
         };
   });
 }

@@ -4,6 +4,8 @@
  * Camera/microphone use Chrome's real media APIs with its built-in fake devices.
  * Screen scenarios replace getDisplayMedia with an explicit canvas/audio fixture;
  * the meter scenario replaces only mic audio with a controlled oscillator.
+ * Automatic transcription mocks only the speech worker; source audio decoding
+ * and all recording/encoding remain real browser operations.
  * Neither fixture tests the native screen-share picker or physical hardware.
  */
 import assert from "node:assert/strict";
@@ -75,6 +77,27 @@ await context.addInitScript(() => {
     mockMicrophone: false,
     microphoneFixture: null,
     speakerConnections: 0,
+    speechWorkers: [],
+    displaySize: [1280, 720],
+  };
+  const NativeWorker = window.Worker;
+  window.Worker = class {
+    constructor(url, options) {
+      if (!String(url).includes("transcription.worker")) return new NativeWorker(url, options);
+      this.onmessage = null;
+      this.onerror = null;
+      this.onmessageerror = null;
+      this.terminated = false;
+      window.__mediaTest.speechWorkers.push(this);
+    }
+    postMessage({ samples, duration }) {
+      if (!(samples instanceof Float32Array) || !samples.length) throw new Error("Recorder smoke expects actual decoded PCM audio");
+      this.timer = setTimeout(() => {
+        if (this.terminated) return;
+        this.onmessage?.({ data: { type: "complete", transcript: { words: [{ id: "smoke-word", text: "Recording", start: 0, end: Math.min(0.25, duration) }], language: "en", model: "recorder-smoke-worker", createdAt: Date.now() } } });
+      }, 100);
+    }
+    terminate() { this.terminated = true; clearTimeout(this.timer); }
   };
   const own = (stream) => {
     window.__mediaTest.tracks.push(...stream.getTracks());
@@ -228,6 +251,8 @@ const cameraSetup = async () => {
   await expect(
     page.getByRole("button", { name: "Set up preview" }),
   ).toBeVisible();
+  await expect(page.locator(".rc-canvas-preset")).toHaveText("1280 × 720 landscape canvas · locked after recording");
+  await expect(page.locator(".rc-transcript-note")).toContainText("A transcript starts automatically on this device after you stop.");
 };
 const preview = async () => {
   await page.getByRole("button", { name: "Set up preview" }).click();
@@ -245,6 +270,19 @@ const preview = async () => {
         ),
     )
     .toBe(true);
+  assert.deepEqual(
+    await page.locator(".rc-video").evaluate(video => [video.videoWidth, video.videoHeight]),
+    [1280, 720],
+    "Every recording mode uses the fixed landscape preset",
+  );
+};
+
+const editorReady = async () => {
+  await expect(page.getByRole("button", { name: "Export video", exact: true })).toBeEnabled({ timeout: 15000 });
+  // New recordings open their automatic transcript. The baseline media checks
+  // continue in video settings once the asynchronous operation unlocks editing.
+  await page.getByRole("tab", { name: "Video settings", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "A little context for your video" })).toBeEnabled({ timeout: 15000 });
 };
 
 const assertRecordingStable = async (ids) => {
@@ -511,6 +549,9 @@ try {
   const captured = await readDatabase();
   assert.equal(captured.projects.length, 1);
   assert.equal(captured.projects[0].mode, "camera");
+  assert.deepEqual([captured.projects[0].width, captured.projects[0].height], [1280, 720]);
+  const encodedCamera = await sampleSavedRecording(captured.projects[0].id, []);
+  assert.deepEqual([encodedCamera.width, encodedCamera.height], [1280, 720], "Encoded camera recording retains the preset resolution");
   assert(
     captured.projects[0].duration >= 2.7 && captured.projects[0].duration < 4.4,
     `Recorded duration ${captured.projects[0].duration} must exclude the pause`,
@@ -526,6 +567,7 @@ try {
   await page
     .getByRole("textbox", { name: "Project name", exact: true })
     .fill("Camera smoke recording");
+  await editorReady();
   await page
     .getByRole("textbox", { name: "A little context for your video" })
     .fill("A saved recorder smoke test");
@@ -555,6 +597,7 @@ try {
   await page
     .getByRole("button", { name: "Edit Camera smoke recording", exact: true })
     .click();
+  await editorReady();
   await expect(
     page.getByRole("textbox", { name: "A little context for your video" }),
   ).toHaveValue("A saved recorder smoke test");
@@ -573,13 +616,12 @@ try {
         throw new DOMException("Test picker cancelled", "NotAllowedError");
       }
       const canvas = document.createElement("canvas");
-      canvas.width = 1280;
-      canvas.height = 720;
+      [canvas.width, canvas.height] = window.__mediaTest.displaySize;
       const drawing = canvas.getContext("2d");
       let frame = 0;
       const paint = () => {
         drawing.fillStyle = "rgb(14,98,185)";
-        drawing.fillRect(0, 0, 1280, 720);
+        drawing.fillRect(0, 0, canvas.width, canvas.height);
         drawing.fillStyle = "#fff";
         drawing.fillRect((frame++ * 5) % 900, 30, 40, 40);
       };
@@ -756,6 +798,7 @@ try {
   const stableDimensions = await page
     .locator(".rc-video")
     .evaluate((video) => [video.videoWidth, video.videoHeight]);
+  assert.deepEqual(stableDimensions, [1280, 720]);
   assert.equal(
     stableIds.length,
     2,
@@ -921,8 +964,18 @@ try {
   await page
     .getByRole("button", { name: "Save and return to projects" })
     .click();
+  await page.evaluate(() => { window.__mediaTest.displaySize = [640, 960]; });
   await page.getByRole("button", { name: /Show, don’t tell/ }).click();
   await preview();
+  const portraitScreen = await page.locator(".rc-video").evaluate(video => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1280; canvas.height = 720;
+    const drawing = canvas.getContext("2d");
+    drawing.drawImage(video, 0, 0);
+    return { edge: [...drawing.getImageData(40, 360, 1, 1).data], center: [...drawing.getImageData(640, 360, 1, 1).data] };
+  });
+  assert(portraitScreen.edge.slice(0, 3).every(value => value < 35), "Portrait screen source must be letterboxed inside the preset canvas");
+  assert(portraitScreen.center[2] > 150 && portraitScreen.center[0] < 40, "Portrait screen remains visible and contained in the preset canvas");
   await page
     .getByRole("button", { name: "Start recording", exact: true })
     .click();
@@ -949,8 +1002,9 @@ try {
   await page.getByRole("button", { name: "Back to workspace" }).click();
   await page.getByRole("button", { name: "Discard and leave" }).click();
   await expect.poll(allStopped).toBe(true);
+  await page.evaluate(() => { window.__mediaTest.displaySize = [1280, 720]; });
   console.log(
-    "PASS screen-only: native share ending keeps stable recording and dark fallback; discarding releases all tracks",
+    "PASS screen-only: portrait source contained in 1280×720 preset; native share ending keeps stable recording and dark fallback; discarding releases all tracks",
   );
 
   // Meter readings come from the microphone signal, never the mixed screen audio.
