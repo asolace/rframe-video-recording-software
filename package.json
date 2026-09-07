@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "test:browser": "node scripts/smoke-library.mjs && node scripts/smoke-recorder.mjs && node scripts/smoke-export.mjs && node scripts/smoke-sections.mjs && node scripts/smoke-transcript-editor.mjs",
+    "test:browser": "node scripts/smoke-library.mjs && node scripts/smoke-recorder.mjs && node scripts/smoke-export.mjs && node scripts/smoke-sections.mjs && node scripts/smoke-transcript-editor.mjs && node scripts/smoke-editor-shortcuts.mjs",
     "test:transcription": "node scripts/smoke-transcription.mjs",
     "test:transcription:runtime": "node scripts/smoke-transcription-runtime.mjs"
   },

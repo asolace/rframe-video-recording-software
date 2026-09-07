@@ -18,6 +18,8 @@ Open the localhost URL printed by Vite. Use **desktop Chrome or Edge** for the f
 - **Check your microphone:** after setting up preview, the live **Mic level** bar responds as you speak, including while recording or paused. It shows when your mic is muted and warns when the input is too loud. It measures the microphone independently of shared-screen audio.
 - **Canvas:** new recordings use a fixed **1280 × 720, 16:9** canvas. Cameras and shared screens fit inside it. Canvas size cannot be adjusted in the editor; imported videos keep their original dimensions.
 - **Edit:** trim clip boundaries, split at the playhead, delete or reorder clips, undo and redo, set volume or mute, and add a title.
+- **Navigate the timeline:** zoom from **1× to 8×**, scroll horizontally, or choose **Fit** to see the whole edit. Focus the scrollable track to pan with arrow keys. The ruler, clips, and playhead stay aligned. Use the clip menu to select tiny fragments left by transcript cuts.
+- **Keyboard editing:** use **Space** to play/pause, **S** to split, **I/O** to mark a section within the current clip, and **Delete/Backspace** to remove the selected section or clip. Arrow keys seek 0.1 seconds; Shift+Arrow seeks 1 second. Ctrl/⌘+Z undoes, Ctrl/⌘+Shift+Z redoes, and Ctrl/⌘+S saves. Click the keyboard icon or press **?** for the full list. Text inputs and sliders keep their usual keys, and transcript deletion stays within selected words.
 - **Delete a section:** select a clip, click **Select section**, then drag the two handles or enter **From/To** times. Click **Delete selected section** to remove that interval and join the remaining footage. Undo restores it. Times refer to the original recording.
 - **Edit by transcript:** after a recording ends, Frame saves the video, opens **Transcript**, generates an English transcript on your device, and saves it automatically. For imported videos, click **Generate transcript**. Select words (Shift-click for a range), then press Delete/Backspace or the delete button to cut their video and audio from the timeline. The displayed transcript follows clip order and highlights the current word during playback.
 - **Clean up speech:** remove recognized filler words such as “um” and “uh” in one action. Analyze silences with adjustable quietness and minimum duration, review the detected gaps, then apply the cuts. Undo restores these edits.
@@ -65,6 +67,8 @@ npm run test:browser
 
 The library test covers import, persistence, folder/project management, search, favorites, and responsive layouts. Recorder tests use Chrome's synthetic camera input; simulated display inputs exercise composition without opening a physical screen picker. Export and section tests generate and decode real video to check edits, locked framing, audio, and cancellation. Transcript editor tests use timed text fixtures and real audio to check word deletion, filler cleanup, silence cuts, undo, export, persistence, and automatic transcription lifecycle. Screenshots and fixture outputs are written to `test-results/`, which is ignored by Git. Real hardware selection and the native screen picker should also be checked manually in your browser.
 
+The editor shortcut test checks keyboard actions, typing and transcript guards, saved edits, the shortcuts dialog, timeline zoom geometry, and mobile layout.
+
 To additionally run the local speech model on real audio, with network access for the model and sample download:
 
 ```powershell
@@ -82,6 +86,7 @@ The runtime regression checks both the local Vite path and production assets usi
 - `src/lib/export-video.ts`: shared preview rendering and actual edited video encoding.
 - `src/lib/timeline.ts`: pure clip and timeline operations.
 - `src/features/editor/ClipSectionSelector.tsx`: selection handles and time boundaries for deleting footage.
+- `src/features/editor/TimelineTrack.tsx`: synchronized, zoomable ruler, clip track, and playhead.
 - `src/lib/crop.ts`: compatibility rendering for spatial crops saved by earlier versions.
 - `src/lib/transcript-edit.ts`: timestamp validation and word-linked timeline cuts.
 - `src/lib/transcription.ts` and `transcription.worker.ts`: local Whisper model lifecycle and word alignment.
@@ -90,3 +95,7 @@ The runtime regression checks both the local Vite path and production assets usi
 - `src/lib/media.ts`: video metadata, thumbnails, downloads, and formatting.
 
 Browser API references: [MediaRecorder](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder), [screen capture](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia), and [canvas capture](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/captureStream).
+
+## Feature research
+
+See the [Recordly comparison and roadmap](docs/recordly-review.md) for the source-based review, independently implemented editing improvements, and proposed next steps such as portable project backups, captions, waveform display, and export formats.

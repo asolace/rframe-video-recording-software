@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   ArrowLeft,
   ArrowDownToLine,
@@ -7,6 +8,7 @@ import {
   ChevronRight,
   Download,
   Film,
+  Keyboard,
   LoaderCircle,
   Maximize,
   Pause,
@@ -40,7 +42,9 @@ import {
 } from "../../lib/timeline";
 import { cutTranscriptRanges } from "../../lib/transcript-edit";
 import ClipSectionSelector from "./ClipSectionSelector";
+import EditorShortcutsDialog from "./EditorShortcutsDialog";
 import TranscriptPanel from "./TranscriptPanel";
+import TimelineTrack from "./TimelineTrack";
 import "./editor.css";
 
 interface Props {
@@ -50,12 +54,15 @@ interface Props {
   onSave: (edits: EditState, name: string) => Promise<void>;
   onBack: () => void;
 }
-const timecode = (seconds: number) =>
-  `${Math.floor(Math.max(0, seconds) / 60)
+const timecode = (seconds: number) => {
+  // Avoid displaying a 0.8s boundary as 0.7s after floating-point timeline sums.
+  const tenths = Math.floor(Math.max(0, seconds) * 10 + 0.000001);
+  return `${Math.floor(tenths / 600)
     .toString()
-    .padStart(2, "0")}:${Math.floor(Math.max(0, seconds) % 60)
+    .padStart(2, "0")}:${Math.floor((tenths % 600) / 10)
     .toString()
-    .padStart(2, "0")}.${Math.floor((Math.max(0, seconds) % 1) * 10)}`;
+    .padStart(2, "0")}.${tenths % 10}`;
+};
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -112,10 +119,13 @@ export default function Editor({
   const [notice, setNotice] = useState("");
   const [url, setUrl] = useState("");
   const [selectingSection, setSelectingSection] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [sectionSelection, setSectionSelection] = useState<
     (TimeRange & { clipId: string }) | null
   >(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const shortcutsOpenerRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const editsRef = useRef(edits);
   const activeRef = useRef(0);
@@ -153,6 +163,15 @@ export default function Editor({
   );
   const dirty = saved !== editSnapshot;
   const busy = saving || exporting || processingTranscript;
+
+  useEffect(() => {
+    workspaceRef.current?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    // Removing a focused clip must not strand subsequent undo keys on the body.
+    if (document.activeElement === document.body)
+      workspaceRef.current?.focus({ preventScroll: true });
+  }, [edits]);
 
   useEffect(() => {
     if (!dirty && !exporting && !processingTranscript) return;
@@ -471,9 +490,145 @@ export default function Editor({
     }
   }
 
+  function markSection(edge: "start" | "end") {
+    pause();
+    const at = Math.max(
+      selectedClip.start,
+      Math.min(videoRef.current?.currentTime ?? sourceTime, selectedClip.end),
+    );
+    const current = selectingSection
+      ? sectionRange
+      : { start: selectedClip.start, end: selectedClip.end };
+    setSectionSelection({
+      clipId: selectedClip.id,
+      start: edge === "start" ? at : Math.min(current.start, at),
+      end: edge === "end" ? at : Math.max(current.end, at),
+    });
+    setSelectingSection(true);
+  }
+
+  function openShortcuts() {
+    shortcutsOpenerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : workspaceRef.current;
+    pause();
+    setShowShortcuts(true);
+  }
+
+  function closeShortcuts() {
+    setShowShortcuts(false);
+    const opener = shortcutsOpenerRef.current;
+    shortcutsOpenerRef.current = null;
+    requestAnimationFrame(() => {
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      else workspaceRef.current?.focus({ preventScroll: true });
+    });
+  }
+
+  function handleShortcut(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.altKey)
+      return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const key = event.key.toLowerCase();
+    const command = event.ctrlKey || event.metaKey;
+    // Saving also works while renaming. Text fields keep their native editing keys.
+    if (command && key === "s" && !event.shiftKey) {
+      event.preventDefault();
+      if (!busy && dirty && !event.repeat) void save();
+      return;
+    }
+    if (
+      target.isContentEditable ||
+      target.closest(
+        'input, textarea, select, [role="textbox"], [role="slider"]',
+      )
+    )
+      return;
+    if (command) {
+      if (key === "z" || (key === "y" && !event.shiftKey)) {
+        event.preventDefault();
+        if (!busy && !event.repeat) {
+          if (key === "y" || event.shiftKey) redo();
+          else undo();
+        }
+      }
+      return;
+    }
+    // Transcript selection owns its deletion keys; Space activates focused buttons.
+    if (target.closest("#ed-transcript-panel")) return;
+    if (key === " " && target.closest('button, a, [role="button"]')) return;
+    const supported = [
+      " ",
+      "s",
+      "i",
+      "o",
+      "delete",
+      "backspace",
+      "arrowleft",
+      "arrowright",
+      "home",
+      "end",
+      "?",
+    ];
+    if (!supported.includes(key)) return;
+    if (event.shiftKey && !["arrowleft", "arrowright", "?"].includes(key))
+      return;
+    event.preventDefault();
+    if (busy || (!ready && key !== "?")) return;
+    if (event.repeat && !["arrowleft", "arrowright"].includes(key)) return;
+    switch (key) {
+      case " ":
+        void togglePlay();
+        break;
+      case "s":
+        if (canSplit) split();
+        break;
+      case "i":
+        markSection("start");
+        break;
+      case "o":
+        markSection("end");
+        break;
+      case "delete":
+      case "backspace":
+        if (selectingSection) deleteSection();
+        else if (edits.clips.length > 1)
+          change({ ...edits, clips: removeClip(edits.clips, selectedClip.id) });
+        break;
+      case "?":
+        openShortcuts();
+        break;
+      default: {
+        const current = sourceToTimeline(
+          edits.clips,
+          selectedIndex,
+          videoRef.current?.currentTime ?? sourceTime,
+        );
+        const step = event.shiftKey ? 1 : 0.1;
+        const next =
+          key === "home"
+            ? 0
+            : key === "end"
+              ? total
+              : current + (key === "arrowleft" ? -step : step);
+        const position = timelineToSource(edits.clips, next);
+        pause();
+        seekTo(position.index, position.time);
+      }
+    }
+  }
+
   return (
     <>
-      <div className="ed-workspace" inert={exporting}>
+      <div
+        ref={workspaceRef}
+        className="ed-workspace"
+        tabIndex={-1}
+        onKeyDown={handleShortcut}
+        inert={exporting}
+      >
         <header className="ed-header">
           <button
             className="ed-icon ed-back"
@@ -499,8 +654,19 @@ export default function Editor({
           </div>
           <div className="ed-header-actions">
             <button
+              className="ed-icon"
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts (?)"
+              disabled={busy}
+              onClick={openShortcuts}
+            >
+              <Keyboard size={19} />
+            </button>
+            <button
               className="ed-button ed-save"
               aria-label="Save edits"
+              aria-keyshortcuts="Control+s Meta+s"
+              title="Save edits (Ctrl / ⌘ + S)"
               disabled={busy || !dirty}
               onClick={() => void save()}
             >
@@ -860,6 +1026,8 @@ export default function Editor({
                 onClick={undo}
                 disabled={!past.length || busy}
                 aria-label="Undo edit"
+                aria-keyshortcuts="Control+z Meta+z"
+                title="Undo (Ctrl / ⌘ + Z)"
               >
                 <Undo2 size={17} />
               </button>
@@ -868,6 +1036,8 @@ export default function Editor({
                 onClick={redo}
                 disabled={!future.length || busy}
                 aria-label="Redo edit"
+                aria-keyshortcuts="Control+Shift+z Meta+Shift+z Control+y"
+                title="Redo (Ctrl / ⌘ + Shift + Z)"
               >
                 <Redo2 size={17} />
               </button>
@@ -885,6 +1055,8 @@ export default function Editor({
               </button>
               <button
                 className="ed-button ed-split"
+                aria-keyshortcuts="s"
+                title="Split at playhead (S)"
                 onClick={split}
                 disabled={!canSplit || busy}
               >
@@ -901,80 +1073,27 @@ export default function Editor({
                 }
                 disabled={edits.clips.length <= 1 || busy}
                 aria-label="Delete selected clip"
+                aria-keyshortcuts="Delete Backspace"
+                title="Delete selected clip (Delete / Backspace)"
               >
                 <Trash2 size={16} />
               </button>
             </div>
           </div>
-          <div className="ed-seek-ruler">
-            <span>{timecode(0)}</span>
-            <span>{timecode(total / 4)}</span>
-            <span>{timecode(total / 2)}</span>
-            <span>{timecode((total * 3) / 4)}</span>
-            <span>{timecode(total)}</span>
-          </div>
-          <div className="ed-track">
-            <div className="ed-track-label">
-              <Film size={17} />
-              <span>Video</span>
-            </div>
-            <div className="ed-track-clips">
-              {edits.clips.map((clip, index) => (
-                <button
-                  key={clip.id}
-                  className={`ed-clip ${selectedId === clip.id ? "is-selected" : ""}`}
-                  style={{
-                    flexGrow: clip.end - clip.start,
-                    backgroundImage: project.thumbnail
-                      ? `linear-gradient(0deg, rgba(20, 21, 30, .88), rgba(20, 21, 30, .36)), url("${project.thumbnail}")`
-                      : undefined,
-                  }}
-                  onClick={() => {
-                    pause();
-                    seekTo(index, clip.start);
-                  }}
-                  aria-label={`Select clip ${index + 1}, ${timecode(clip.end - clip.start)} long`}
-                  aria-pressed={selectedId === clip.id}
-                  disabled={busy}
-                >
-                  {selectingSection && selectedId === clip.id && (
-                    <span
-                      className="ed-clip-cut-overlay"
-                      aria-hidden="true"
-                      style={{
-                        left: `${(100 * (sectionRange.start - clip.start)) / (clip.end - clip.start)}%`,
-                        width: `${(100 * (sectionRange.end - sectionRange.start)) / (clip.end - clip.start)}%`,
-                      }}
-                    />
-                  )}
-                  <span className="ed-clip-name">Clip {index + 1}</span>
-                  <span className="ed-clip-length">
-                    {timecode(clip.end - clip.start)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="ed-scrubber-row">
-            <span />
-            <input
-              type="range"
-              aria-label="Timeline playhead"
-              min="0"
-              max={Math.max(total, MIN_CLIP)}
-              step="0.01"
-              value={Math.min(total, editedTime)}
-              disabled={!ready || busy}
-              onChange={(event) => {
-                pause();
-                const position = timelineToSource(
-                  edits.clips,
-                  Number(event.target.value),
-                );
-                seekTo(position.index, position.time);
-              }}
-            />
-          </div>
+          <TimelineTrack
+            clips={edits.clips}
+            thumbnail={project.thumbnail}
+            selectedId={selectedId}
+            editedTime={editedTime}
+            total={total}
+            disabled={!ready || busy}
+            selectingSection={selectingSection}
+            sectionRange={sectionRange}
+            onSeek={(index, time) => {
+              pause();
+              seekTo(index, time);
+            }}
+          />
           {selectingSection ? (
             <ClipSectionSelector
               clip={selectedClip}
@@ -1086,6 +1205,7 @@ export default function Editor({
           </div>
         </section>
       </div>
+      {showShortcuts && <EditorShortcutsDialog onClose={closeShortcuts} />}
       {exporting && (
         <div className="ed-export-backdrop">
           <section

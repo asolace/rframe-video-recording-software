@@ -1,0 +1,80 @@
+.ed-shortcuts-dialog {
+  box-sizing: border-box;
+  width: min(510px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  padding: 25px;
+  border: 1px solid #3d4153;
+  border-radius: 14px;
+  background: #191b23;
+  color: #edeef5;
+  box-shadow: 0 28px 90px #0008;
+  font-family: inherit;
+}
+.ed-shortcuts-dialog::backdrop {
+  background: #08090cc9;
+  backdrop-filter: blur(7px);
+}
+.ed-shortcuts-dialog header,
+.ed-shortcuts-dialog h2,
+.ed-shortcuts-dialog dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.ed-shortcuts-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  justify-content: flex-start;
+}
+.ed-shortcuts-dialog header button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #c7cadd;
+  background: #292c38;
+  cursor: pointer;
+}
+.ed-shortcuts-dialog button:focus-visible {
+  outline: 2px solid #a2a7fc;
+  outline-offset: 3px;
+}
+.ed-shortcuts-dialog p {
+  color: #a8adbf;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 16px 0 0;
+}
+.ed-shortcuts-dialog dl {
+  margin: 18px 0 0;
+}
+.ed-shortcuts-dialog dl > div {
+  padding: 10px 0;
+  border-bottom: 1px solid #2d303c;
+  font-size: 12px;
+}
+.ed-shortcuts-dialog dd {
+  margin: 0;
+  flex-shrink: 0;
+}
+.ed-shortcuts-dialog kbd {
+  color: #c7ccff;
+  font: inherit;
+  font-size: 11px;
+}
+@media (max-width: 480px) {
+  .ed-shortcuts-dialog {
+    padding: 18px;
+  }
+  .ed-shortcuts-dialog dl > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+}
